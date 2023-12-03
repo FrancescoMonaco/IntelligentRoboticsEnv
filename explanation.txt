@@ -1,0 +1,12 @@
+The code works by accumulating the readings of the Laser Scanner for n iterations (parameter),
+it then converts to the euclidean space the meaurements and clusters using
+a simple clustering algorithm, that chooses to either to merge to one of the clusters
+or to create a new centroid, based on the distance from the centroids present at that instant.
+
+The algorithm is able to detect multiple people but the only assumption is for the minimum distance 
+between them, in case of many people the thresold of the clustering needs to be lowered,
+otherwise some people might end up merged together.
+
+Since the algorithm doesn't care of the concept of right/left feet, it is able
+to deal with the case of people standing in lateral positions 
+(lower number of subsequent meaurements).
