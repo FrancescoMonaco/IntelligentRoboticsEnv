@@ -3,6 +3,130 @@
 #include <vector>
 #include <tuple>
 #include <limits>
+#include <cmath>
+
+//*** Global variables
+    // Robot parameters
+const double angle_min = 0.0;
+const double angle_max = 6.28;
+const double angle_increment = 0.0087;
+const double range_min = 0.12;
+const double range_max = 3.5;
+    // Accumulation before clustering
+const int num_scans_for_clustering = 20;
+    // Number of expected points in a scan
+const int vector_size = std::floor((angle_max - angle_min) / angle_increment);
+    // Scan counter
+int scan_count = 0;
+    // Vectors for storing the data
+std::vector<float> ranges_concat;
+std::vector<std::tuple<float, float>> euclidean_positions;
+std::vector<std::tuple<float, float>> centroids;
+
+//*** Functions declaration
+
+/// @brief Transforms (r, theta) to (x, y)
+/// @param range r
+/// @param angle theta
+/// @return (x,y)
+std::tuple<float, float> polarToCartesian(float range, float angle);
+
+/// @brief Clusters the points in ranges, centroids can be found in the global variable centroids
+/// @param ranges concatenation of points
+/// @param clustering_threshold distance threshold for merging
+void clusterPoints(const std::vector<float>& ranges, float clustering_threshold);
+
+/// @brief Callback for the /scan topic
+/// @param msg LaserScan message
+void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
+
+//*** Main
+int main(int argc, char** argv){
+    // Initialize the node
+    ros::init(argc, argv, "laser_scanner");
+    ros::NodeHandle nh;
+
+    // Subscribe to the topic /scan
+    ros::Subscriber sub = nh.subscribe("/scan", 1000, scanCallback);
+    
+    // Spin at 5 Hz
+    ros::Rate rate(5);
+    while(ros::ok()){
+        ros::spinOnce();
+        rate.sleep();
+    }
+}
+
+//*** Functions implementation
+
+std::tuple<float, float> polarToCartesian(float range, float angle) {
+    float x = range * cos(angle);
+    float y = range * sin(angle);
+    return std::make_tuple(x, y);
+}
+
+void clusterPoints(const std::vector<float>& ranges, float clustering_threshold) {
+    // For each point
+    for (int i = 0; i < ranges.size(); ++i) {
+        // If not infinity, convert and cluster
+        if (ranges[i] != std::numeric_limits<float>::infinity()) {
+            //since ranges is a concatenation of all the scans, each 720 points we have a new scan
+            //print vector size and the real size of the vector
+            std::tuple<float, float> current_point = polarToCartesian(ranges[i], angle_min + (i % vector_size) * angle_increment);
+
+            // Check if the current point is close to any existing centroid
+            bool found_cluster = false;
+            for (int j = 0; j < centroids.size(); ++j) {
+                float distance = sqrt(pow(std::get<0>(current_point) - std::get<0>(centroids[j]), 2) +
+                                      pow(std::get<1>(current_point) - std::get<1>(centroids[j]), 2));
+                if (distance < clustering_threshold) {
+                    found_cluster = true;
+                    // Update the centroid of the existing cluster
+                    centroids[j] = std::make_tuple(
+                        (std::get<0>(centroids[j]) + std::get<0>(current_point)) / 2,
+                        (std::get<1>(centroids[j]) + std::get<1>(current_point)) / 2);
+                    break;
+                }
+            }
+
+            // If the point isn't close to a cluster, create a new one
+            if (!found_cluster) {
+                centroids.push_back(current_point);
+            }
+        }
+    }
+}
+
+void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
+    // Extract ranges from the message
+    std::vector<float> ranges = msg->ranges;
+
+    //Add to the concatenation
+    ranges_concat.insert(ranges_concat.end(), ranges.begin(), ranges.end());
+
+    // Set a clustering threshold
+    float clustering_threshold = 0.7;
+
+    // Increment the scan count
+    scan_count++;
+
+    // When we accumulate enough points, cluster
+    if (scan_count == num_scans_for_clustering) {
+
+        clusterPoints(ranges_concat, clustering_threshold);
+
+        ROS_INFO("Euclidean positions after %d scans:", num_scans_for_clustering);
+        for (const auto& position : centroids) {
+            ROS_INFO("(%f, %f)", std::get<0>(position), std::get<1>(position));
+        }
+
+        // Reset the variables
+        scan_count = 0;
+        centroids.clear();
+        ranges_concat.clear();
+    }
+}
+
 
 /* Non clustering version
     int non_zero_seq = 0;
@@ -85,114 +209,3 @@
         detected_positions.clear();
 
 */
-
-//*** Global variables
-const double angle_min = 0.0;
-const double angle_max = 6.8;
-const double angle_increment = 0.0087;
-const double range_min = 0.12;
-const double range_max = 3.5;
-const int num_scans_for_clustering = 20;
-int scan_count = 0;
-
-std::vector<float> ranges_concat;
-std::vector<std::tuple<float, float>> euclidean_positions;
-std::vector<std::tuple<float, float>> centroids;
-
-//*** Functions
-
-/// @brief Transforms (r, theta) to (x, y)
-/// @param range r
-/// @param angle theta
-/// @return (x,y)
-std::tuple<float, float> polarToCartesian(float range, float angle) {
-    float x = range * cos(angle);
-    float y = range * sin(angle);
-    return std::make_tuple(x, y);
-}
-
-
-/// @brief Clusters the points in ranges, centroids can be found in the global variable centroids
-/// @param ranges concatenation of points
-/// @param clustering_threshold distance threshold for merging
-void clusterPoints(const std::vector<float>& ranges, float clustering_threshold) {
-
-    // Iterate through the vector of concatenated polar coords
-    for (int i = 0; i < ranges.size(); ++i) {
-        // If not infinity
-        if (ranges[i] != std::numeric_limits<float>::infinity()) {
-            // Convert
-            //since ranges is a concatenation of all the scans, each 720 points we have a new scan
-            std::tuple<float, float> current_point = polarToCartesian(ranges[i], (i % 720) * angle_increment);
-
-            // Check if the current point is close to any existing centroid
-            bool found_cluster = false;
-            for (int j = 0; j < centroids.size(); ++j) {
-                float distance = sqrt(pow(std::get<0>(current_point) - std::get<0>(centroids[j]), 2) +
-                                      pow(std::get<1>(current_point) - std::get<1>(centroids[j]), 2));
-                if (distance < clustering_threshold) {
-                    found_cluster = true;
-                    // Update the centroid of the existing cluster
-                    centroids[j] = std::make_tuple(
-                        (std::get<0>(centroids[j]) + std::get<0>(current_point)) / 2,
-                        (std::get<1>(centroids[j]) + std::get<1>(current_point)) / 2);
-                    break;
-                }
-            }
-
-            // If the point isn't close to a cluster, create a new one
-            if (!found_cluster) {
-                centroids.push_back(current_point);
-            }
-        }
-    }
-}
-
-/// @brief Callback for the /scan topic
-/// @param msg LaserScan message
-void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
-    // Extract ranges from the message
-    std::vector<float> ranges = msg->ranges;
-
-    //Add to the concatenation
-    ranges_concat.insert(ranges_concat.end(), ranges.begin(), ranges.end());
-
-    // Set a clustering threshold
-    float clustering_threshold = 0.7;
-
-    // Increment the scan count
-    scan_count++;
-
-    // When we accumulate enough points, cluster
-    if (scan_count == num_scans_for_clustering) {
-
-        clusterPoints(ranges_concat, clustering_threshold);
-
-        ROS_INFO("Euclidean positions after %d scans:", num_scans_for_clustering);
-        for (const auto& position : centroids) {
-            ROS_INFO("(%f, %f)", std::get<0>(position), std::get<1>(position));
-        }
-
-        // Reset the variables
-        scan_count = 0;
-        centroids.clear();
-        ranges_concat.clear();
-    }
-}
-
-//*** Main
-int main(int argc, char** argv){
-    // Initialize the node
-    ros::init(argc, argv, "laser_scanner");
-    ros::NodeHandle nh;
-
-    // Subscribe to the topic /scan
-    ros::Subscriber sub = nh.subscribe("/scan", 1000, scanCallback);
-    
-    // Spin at 5 Hz
-    ros::Rate rate(5);
-    while(ros::ok()){
-        ros::spinOnce();
-        rate.sleep();
-    }
-}
