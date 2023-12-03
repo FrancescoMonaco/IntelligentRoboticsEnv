@@ -4,7 +4,7 @@
 #include <tuple>
 #include <limits>
 
-/*
+/* Non clustering version
     int non_zero_seq = 0;
     int zero_seq = 0;
     // Conversion cycle
@@ -99,22 +99,31 @@ std::vector<float> ranges_concat;
 std::vector<std::tuple<float, float>> euclidean_positions;
 std::vector<std::tuple<float, float>> centroids;
 
-// Function to convert polar coordinates to Cartesian coordinates
+//*** Functions
+
+/// @brief Transforms (r, theta) to (x, y)
+/// @param range r
+/// @param angle theta
+/// @return (x,y)
 std::tuple<float, float> polarToCartesian(float range, float angle) {
     float x = range * cos(angle);
     float y = range * sin(angle);
     return std::make_tuple(x, y);
 }
 
-// Function to perform clustering
-void clusterPoints(const std::vector<float>& ranges, float clustering_threshold) {
-    std::vector<std::vector<float>> clustered_points;
 
-    // Iterate through the ranges
+/// @brief Clusters the points in ranges, centroids can be found in the global variable centroids
+/// @param ranges concatenation of points
+/// @param clustering_threshold distance threshold for merging
+void clusterPoints(const std::vector<float>& ranges, float clustering_threshold) {
+
+    // Iterate through the vector of concatenated polar coords
     for (int i = 0; i < ranges.size(); ++i) {
+        // If not infinity
         if (ranges[i] != std::numeric_limits<float>::infinity()) {
-            // Convert polar coordinates to Cartesian coordinates
-            std::tuple<float, float> current_point = polarToCartesian(ranges[i], i * angle_increment);
+            // Convert
+            //since ranges is a concatenation of all the scans, each 720 points we have a new scan
+            std::tuple<float, float> current_point = polarToCartesian(ranges[i], (i % 720) * angle_increment);
 
             // Check if the current point is close to any existing centroid
             bool found_cluster = false;
@@ -127,38 +136,36 @@ void clusterPoints(const std::vector<float>& ranges, float clustering_threshold)
                     centroids[j] = std::make_tuple(
                         (std::get<0>(centroids[j]) + std::get<0>(current_point)) / 2,
                         (std::get<1>(centroids[j]) + std::get<1>(current_point)) / 2);
-                    // Add the point to the existing cluster (optional)
-                    clustered_points[j].push_back(ranges[i]);
                     break;
                 }
             }
 
-            // If the point doesn't belong to any existing cluster, create a new cluster
+            // If the point isn't close to a cluster, create a new one
             if (!found_cluster) {
-                clustered_points.push_back({ranges[i]});
                 centroids.push_back(current_point);
             }
         }
     }
 }
 
-// Callback function for the laser scan
+/// @brief Callback for the /scan topic
+/// @param msg LaserScan message
 void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
     // Extract ranges from the message
     std::vector<float> ranges = msg->ranges;
 
     //Add to the concatenation
     ranges_concat.insert(ranges_concat.end(), ranges.begin(), ranges.end());
-    // Set a clustering threshold (adjust as needed)
-    float clustering_threshold = 0.7;
 
+    // Set a clustering threshold
+    float clustering_threshold = 0.7;
 
     // Increment the scan count
     scan_count++;
 
-    // If the required number of scans is reached, print the centroids
+    // When we accumulate enough points, cluster
     if (scan_count == num_scans_for_clustering) {
-        // Perform clustering
+
         clusterPoints(ranges_concat, clustering_threshold);
 
         ROS_INFO("Euclidean positions after %d scans:", num_scans_for_clustering);
@@ -166,7 +173,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
             ROS_INFO("(%f, %f)", std::get<0>(position), std::get<1>(position));
         }
 
-        // Reset scan_count and euclidean_positions
+        // Reset the variables
         scan_count = 0;
         centroids.clear();
         ranges_concat.clear();
@@ -175,14 +182,14 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
 
 //*** Main
 int main(int argc, char** argv){
-    //initialize the node
+    // Initialize the node
     ros::init(argc, argv, "laser_scanner");
     ros::NodeHandle nh;
 
-    //subscribe to the topic /scan
+    // Subscribe to the topic /scan
     ros::Subscriber sub = nh.subscribe("/scan", 1000, scanCallback);
     
-    //spin at 5 Hz
+    // Spin at 5 Hz
     ros::Rate rate(5);
     while(ros::ok()){
         ros::spinOnce();
